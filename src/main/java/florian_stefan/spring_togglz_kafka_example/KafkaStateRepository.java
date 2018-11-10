@@ -24,6 +24,7 @@ import java.util.concurrent.CountDownLatch;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.WakeupException;
@@ -175,7 +176,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
           featureStates.put(featureName, storageWrapper);
           LOG.info("Successfully processed state of feature {}.", featureName);
         } catch (Exception e) {
-          LOG.error("An error occurred while processing state of feature {}.", featureName);
+          LOG.error("An error occurred while processing state of feature {}.", featureName, e);
         }
       }
     }
@@ -190,7 +191,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
         consumer.close();
         LOG.info("Successfully closed KafkaConsumer.");
       } catch (Exception e) {
-        LOG.error("An error occurred while closing KafkaConsumer!");
+        LOG.error("An error occurred while closing KafkaConsumer!", e);
       } finally {
         countDownLatch.countDown();
       }
@@ -219,7 +220,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
         producer.close();
         LOG.info("Successfully closed KafkaProducer.");
       } catch (Exception e) {
-        LOG.error("An error occurred while closing KafkaProducer!");
+        LOG.error("An error occurred while closing KafkaProducer!", e);
       }
     }
 
@@ -230,16 +231,27 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
         LOG.info("Starting to update state of feature {}.", featureName);
         String featureStateAsString = serialize(storageWrapper);
         LOG.info("Successfully serialized state of feature {}.", featureName);
-        producer.send(new ProducerRecord<>(featureStateTopic, featureName, featureStateAsString));
+        producer.send(buildRecord(featureName, featureStateAsString), buildCallback(featureName));
         LOG.info("Successfully updated state of feature {}.", featureName);
       } catch (Exception e) {
-        LOG.error("An error occurred while updating state of feature {}.", featureName);
-        throw new KafkaStateRepositoryException(feature, e);
+        LOG.error("An error occurred while updating state of feature {}.", featureName, e);
       }
     }
 
     private String serialize(FeatureStateStorageWrapper storageWrapper) {
       return new GsonBuilder().create().toJson(storageWrapper);
+    }
+
+    private ProducerRecord<String, String> buildRecord(String featureName, String featureStateAsString) {
+      return new ProducerRecord<>(featureStateTopic, featureName, featureStateAsString);
+    }
+
+    private Callback buildCallback(String featureName) {
+      return (metadata, exception) -> {
+        if (exception != null) {
+          LOG.error("An error occurred while updating state of feature {}.", featureName, exception);
+        }
+      };
     }
 
   }
