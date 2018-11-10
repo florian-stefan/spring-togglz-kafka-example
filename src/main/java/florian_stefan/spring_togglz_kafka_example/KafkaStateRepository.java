@@ -232,7 +232,6 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
         String featureStateAsString = serialize(storageWrapper);
         LOG.info("Successfully serialized state of feature {}.", featureName);
         producer.send(buildRecord(featureName, featureStateAsString), buildCallback(featureName));
-        LOG.info("Successfully updated state of feature {}.", featureName);
       } catch (Exception e) {
         LOG.error("An error occurred while updating state of feature {}.", featureName, e);
       }
@@ -248,7 +247,9 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
     private Callback buildCallback(String featureName) {
       return (metadata, exception) -> {
-        if (exception != null) {
+        if (exception == null) {
+          LOG.info("Successfully updated state of feature {}.", featureName);
+        } else {
           LOG.error("An error occurred while updating state of feature {}.", featureName, exception);
         }
       };
