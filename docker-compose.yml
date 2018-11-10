@@ -1,31 +1,52 @@
 version: '3.3'
 
 services:
-  greeting-server-1:
+  spring-togglz-kafka-example-server-1:
     build: .
-    container_name: greeting-server-1
+    container_name: spring-togglz-kafka-example-server-1
     ports:
     - "8080:8080"
+    depends_on:
+    - kafka
     networks:
     - spring-togglz-kafka-example-network
-  greeting-server-2:
+  spring-togglz-kafka-example-server-2:
     build: .
-    container_name: greeting-server-2
+    container_name: spring-togglz-kafka-example-server-2
     ports:
     - "8081:8080"
+    depends_on:
+    - kafka
     networks:
     - spring-togglz-kafka-example-network
-  redis:
-    image: redis:5.0.1-alpine
-    container_name: redis
-    command: ["redis-server", "--appendonly", "yes"]
+  kafka:
+    image: confluentinc/cp-kafka:5.0.0
+    container_name: kafka
+    depends_on:
+    - zookeeper
+    environment:
+    - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+    - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
     networks:
     - spring-togglz-kafka-example-network
     volumes:
-    - spring-togglz-kafka-example-volume:/data
+    - spring-togglz-kafka-example-volume-1:/var/lib/kafka/data
+  zookeeper:
+    image: confluentinc/cp-zookeeper:5.0.0
+    container_name: zookeeper
+    environment:
+    - ZOOKEEPER_CLIENT_PORT=2181
+    networks:
+    - spring-togglz-kafka-example-network
+    volumes:
+    - spring-togglz-kafka-example-volume-2:/var/lib/zookeeper/data
+    - spring-togglz-kafka-example-volume-3:/var/lib/zookeeper/log
 
 networks:
   spring-togglz-kafka-example-network:
 
 volumes:
-  spring-togglz-kafka-example-volume:
+  spring-togglz-kafka-example-volume-1:
+  spring-togglz-kafka-example-volume-2:
+  spring-togglz-kafka-example-volume-3:
