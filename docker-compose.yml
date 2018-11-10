@@ -1,0 +1,31 @@
+version: '3.3'
+
+services:
+  greeting-server-1:
+    build: .
+    container_name: greeting-server-1
+    ports:
+    - "8080:8080"
+    networks:
+    - spring-togglz-kafka-example-network
+  greeting-server-2:
+    build: .
+    container_name: greeting-server-2
+    ports:
+    - "8081:8080"
+    networks:
+    - spring-togglz-kafka-example-network
+  redis:
+    image: redis:5.0.1-alpine
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+    - spring-togglz-kafka-example-network
+    volumes:
+    - spring-togglz-kafka-example-volume:/data
+
+networks:
+  spring-togglz-kafka-example-network:
+
+volumes:
+  spring-togglz-kafka-example-volume:
