@@ -3,6 +3,7 @@ package florian_stefan.spring_togglz_kafka_example;
 import static java.util.Collections.singleton;
 import static java.util.Objects.requireNonNull;
 import static java.util.UUID.randomUUID;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG;
@@ -21,12 +22,14 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -50,9 +53,10 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       String bootstrapServers,
       String inboundTopic,
       String outboundTopic,
-      Duration pollingTimeout
+      Duration pollingTimeout,
+      Duration initializationTimeout
   ) {
-    featureStateConsumer = new FeatureStateConsumer(bootstrapServers, inboundTopic, pollingTimeout);
+    featureStateConsumer = new FeatureStateConsumer(bootstrapServers, inboundTopic, pollingTimeout, initializationTimeout);
     featureStateProducer = new FeatureStateProducer(bootstrapServers, outboundTopic);
     featureStates = new ConcurrentHashMap<>();
 
@@ -62,13 +66,15 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
   public static KafkaStateRepository create(
       String bootstrapServers,
       String featureStateTopic,
-      Duration pollingTimeout
+      Duration pollingTimeout,
+      Duration initializationTimeout
   ) {
     return new KafkaStateRepository(
         requireNonNull(bootstrapServers),
         requireNonNull(featureStateTopic),
         requireNonNull(featureStateTopic),
-        requireNonNull(pollingTimeout)
+        requireNonNull(pollingTimeout),
+        requireNonNull(initializationTimeout)
     );
   }
 
@@ -76,13 +82,15 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       String bootstrapServers,
       String inboundTopic,
       String outboundTopic,
-      Duration pollingTimeout
+      Duration pollingTimeout,
+      Duration initializationTimeout
   ) {
     return new KafkaStateRepository(
         requireNonNull(bootstrapServers),
         requireNonNull(inboundTopic),
         requireNonNull(outboundTopic),
-        requireNonNull(pollingTimeout)
+        requireNonNull(pollingTimeout),
+        requireNonNull(initializationTimeout)
     );
   }
 
@@ -114,16 +122,29 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     featureStateProducer.send(featureState.getFeature(), wrapperForFeatureState(featureState));
   }
 
+  public long consumerLag() {
+    return featureStateConsumer.consumerLag();
+  }
+
   class FeatureStateConsumer {
 
     private final KafkaConsumer<String, String> consumer;
-    private final CountDownLatch shutdownLatch;
     private final String inboundTopic;
     private final Duration pollingTimeout;
+    private final Map<TopicPartition, Long> offsets;
+    private final CountDownLatch initializationLatch;
+    private final Duration initializationTimeout;
+    private final CountDownLatch shutdownLatch;
 
     private volatile boolean running;
+    private volatile long consumerLag;
 
-    FeatureStateConsumer(String bootstrapServers, String inboundTopic, Duration pollingTimeout) {
+    FeatureStateConsumer(
+        String bootstrapServers,
+        String inboundTopic,
+        Duration pollingTimeout,
+        Duration initializationTimeout
+    ) {
       Properties properties = new Properties();
       properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
       properties.setProperty(KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
@@ -133,11 +154,15 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       properties.setProperty(ENABLE_AUTO_COMMIT_CONFIG, "false");
 
       this.consumer = new KafkaConsumer<>(properties);
-      this.shutdownLatch = new CountDownLatch(1);
       this.inboundTopic = inboundTopic;
       this.pollingTimeout = pollingTimeout;
+      this.offsets = new ConcurrentHashMap<>();
+      this.initializationLatch = new CountDownLatch(1);
+      this.initializationTimeout = initializationTimeout;
+      this.shutdownLatch = new CountDownLatch(1);
 
       running = false;
+      consumerLag = Long.MAX_VALUE;
     }
 
     void start() {
@@ -146,10 +171,15 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       } else {
         synchronized (this) {
           if (running) {
-            LOG.info("Starting to start FeatureStateConsumer.");
-            new Thread(this::run).start();
-            LOG.info("Successfully started FeatureStateConsumer.");
-            running = true;
+            try {
+              LOG.info("Starting to start FeatureStateConsumer.");
+              new Thread(this::run).start();
+              LOG.info("Successfully started FeatureStateConsumer.");
+              running = true;
+              initializationLatch.await(initializationTimeout.toMillis(), MILLISECONDS);
+            } catch (InterruptedException e) {
+              throw new RuntimeException("An error occurred while awaiting initialization.", e);
+            }
           } else {
             LOG.info("FeatureStateConsumer has already been started.");
           }
@@ -183,6 +213,10 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       return running;
     }
 
+    long consumerLag() {
+      return consumerLag;
+    }
+
     private void run() {
       consumer.subscribe(singleton(inboundTopic));
 
@@ -191,6 +225,8 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
           ConsumerRecords<String, String> records = consumer.poll(pollingTimeout);
 
           processRecords(records);
+
+          updateConsumerLag();
 
           consumer.commitSync();
         }
@@ -214,14 +250,39 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
           LOG.info("Successfully deserialized state of feature {}.", featureName);
           featureStates.put(featureName, storageWrapper);
           LOG.info("Successfully processed state of feature {}.", featureName);
+          updatePartitionOffset(record.partition(), record.offset());
         } catch (Exception e) {
-          LOG.error("An error occurred while processing state of feature {}.", featureName, e);
+          throw new RuntimeException("An error occurred while processing state of feature " + featureName + ".", e);
         }
       }
     }
 
     private FeatureStateStorageWrapper deserialize(String featureStateAsString) {
       return new GsonBuilder().create().fromJson(featureStateAsString, FeatureStateStorageWrapper.class);
+    }
+
+    private void updatePartitionOffset(int partition, long offset) {
+      offsets.put(new TopicPartition(inboundTopic, partition), offset);
+    }
+
+    private void updateConsumerLag() {
+      consumerLag = accumulateEndOffsets();
+
+      if (consumerLag < 1) {
+        initializationLatch.countDown();
+      }
+    }
+
+    private long accumulateEndOffsets() {
+      AtomicLong accumulator = new AtomicLong(0L);
+
+      consumer.endOffsets(consumer.assignment()).forEach((topicPartition, endOffset) -> {
+        long oldValue = accumulator.get();
+        long partitionOffset = endOffset - offsets.getOrDefault(topicPartition, 0L) - 1;
+        accumulator.set(oldValue + partitionOffset);
+      });
+
+      return accumulator.get();
     }
 
     private void shutdown() {
