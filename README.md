@@ -27,3 +27,4 @@ Since the example applications contains the three features `FEATURE_A`, `FEATURE
 
 * Documentation (e.g. consumer group / consumer lags / compacted topic)
 * Integration Test with embedded Kafka
+* Spring Actuator Health Check example for consumer lag
