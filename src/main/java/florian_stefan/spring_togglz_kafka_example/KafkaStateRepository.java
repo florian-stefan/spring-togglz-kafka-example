@@ -40,7 +40,9 @@ import org.togglz.core.repository.FeatureState;
 import org.togglz.core.repository.StateRepository;
 import org.togglz.core.util.FeatureStateStorageWrapper;
 
-
+/**
+ * A {@link StateRepository} based on Apache Kafka.
+ */
 public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
   private static final Logger LOG = LoggerFactory.getLogger(KafkaStateRepository.class);

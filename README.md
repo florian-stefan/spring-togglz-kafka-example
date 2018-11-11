@@ -26,4 +26,3 @@ Since the example applications contains the three features `FEATURE_A`, `FEATURE
 ###### TODO
 
 * Documentation (e.g. consumer group / consumer lags / compacted topic)
-* Spring Actuator Health Check example for consumer lag
