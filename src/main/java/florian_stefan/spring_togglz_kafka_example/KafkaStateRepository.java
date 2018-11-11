@@ -286,7 +286,9 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
 
     private void updatePartitionOffset(int partition, long offset) {
+      LOG.info("Starting to update offset {} of partition {}.", offset, partition);
       offsets.put(new TopicPartition(inboundTopic, partition), offset);
+      LOG.info("Successfully updated offset {} of partition {}.", offset, partition);
     }
 
     private void updateConsumerLag() {
