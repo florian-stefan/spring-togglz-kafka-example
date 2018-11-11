@@ -24,6 +24,12 @@ features `FEATURE_A`, `FEATURE_B` as well as `FEATURE_C` and, therefore, provide
 * http://localhost:8081/features/feature_c (for retrieving the state of `FEATURE_C` from the second application instance)
 * http://localhost:8081/features/feature_c/toggle (for toggling `FEATURE_C` on the second application instance)
 
+Moreover, the example application uses Spring Actuator to provide an health endpoint. The health endpoint returns the
+result of the custom `TogglzHealthCheck` strategy that checks the Kafka based state repository if the its underlying
+Kafka consumer is running and has no lag. It can be accessed here:
+
+* http://localhost:8080/actuator/health (the health endpoint of the first application instance)
+* http://localhost:8081/actuator/health (the health endpoint of the second application instance)
 
 ###### Commands
 
