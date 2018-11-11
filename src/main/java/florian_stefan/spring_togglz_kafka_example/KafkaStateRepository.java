@@ -117,10 +117,14 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
         LOG.info("FeatureStateConsumer has already been started.");
       } else {
         synchronized (this) {
-          LOG.info("Starting to start FeatureStateConsumer.");
-          new Thread(this::run).start();
-          LOG.info("Successfully started FeatureStateConsumer.");
-          running = true;
+          if (running) {
+            LOG.info("Starting to start FeatureStateConsumer.");
+            new Thread(this::run).start();
+            LOG.info("Successfully started FeatureStateConsumer.");
+            running = true;
+          } else {
+            LOG.info("FeatureStateConsumer has already been started.");
+          }
         }
       }
     }
@@ -128,14 +132,18 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     void close() {
       if (running) {
         synchronized (this) {
-          try {
-            LOG.info("Starting to close FeatureStateConsumer.");
-            consumer.wakeup();
-            countDownLatch.await();
-            running = false;
-            LOG.info("Successfully closed FeatureStateConsumer.");
-          } catch (InterruptedException e) {
-            LOG.error("An error occurred while closing FeatureStateConsumer.", e);
+          if (running) {
+            try {
+              LOG.info("Starting to close FeatureStateConsumer.");
+              consumer.wakeup();
+              countDownLatch.await();
+              running = false;
+              LOG.info("Successfully closed FeatureStateConsumer.");
+            } catch (InterruptedException e) {
+              LOG.error("An error occurred while closing FeatureStateConsumer.", e);
+            }
+          } else {
+            LOG.info("FeatureStateConsumer has already been closed.");
           }
         }
       } else {
