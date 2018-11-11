@@ -117,7 +117,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
   class FeatureStateConsumer {
 
     private final KafkaConsumer<String, String> consumer;
-    private final CountDownLatch countDownLatch;
+    private final CountDownLatch shutdownLatch;
     private final String inboundTopic;
     private final Duration pollingTimeout;
 
@@ -133,7 +133,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       properties.setProperty(ENABLE_AUTO_COMMIT_CONFIG, "false");
 
       this.consumer = new KafkaConsumer<>(properties);
-      this.countDownLatch = new CountDownLatch(1);
+      this.shutdownLatch = new CountDownLatch(1);
       this.inboundTopic = inboundTopic;
       this.pollingTimeout = pollingTimeout;
 
@@ -164,7 +164,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
             try {
               LOG.info("Starting to close FeatureStateConsumer.");
               consumer.wakeup();
-              countDownLatch.await();
+              shutdownLatch.await();
               running = false;
               LOG.info("Successfully closed FeatureStateConsumer.");
             } catch (InterruptedException e) {
@@ -232,7 +232,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       } catch (Exception e) {
         LOG.error("An error occurred while closing KafkaConsumer!", e);
       } finally {
-        countDownLatch.countDown();
+        shutdownLatch.countDown();
       }
     }
   }
