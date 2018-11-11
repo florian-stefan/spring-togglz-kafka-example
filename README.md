@@ -33,11 +33,11 @@ Kafka consumer is running and has no lag. It can be accessed here:
 
 ###### Commands
 
-* `docker-compose up -d`
-* `docker-compose up -d --build`
-* `docker-compose down`
-* `docker-compose down -v`
-* `docker ps -a`
-* `docker stop <CONTAINER>`
-* `docker start <CONTAINER>`
-* `docker logs <CONTAINER>`
+* `docker-compose up -d` (for starting the example)
+* `docker-compose up -d --build` (for starting the example and rebuilding the application Docker container)
+* `docker-compose down` (for stopping the example and removing all Docker containers)
+* `docker-compose down -v` (for stopping the example and removing all Docker containers as well as Docker volumes)
+* `docker ps -a` (for displaying all Docker containers)
+* `docker stop <CONTAINER>` (for stopping a Docker container)
+* `docker start <CONTAINER>` (for starting a Docker container)
+* `docker logs <CONTAINER>` (for displaying the logs of a Docker container)
