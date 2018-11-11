@@ -186,6 +186,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
               LOG.info("Successfully started FeatureStateConsumer.");
               running = true;
               initializationLatch.await(initializationTimeout.toMillis(), MILLISECONDS);
+              LOG.info("Successfully initialized FeatureStateConsumer.");
             } catch (InterruptedException e) {
               throw new RuntimeException("An error occurred while awaiting initialization.", e);
             }
