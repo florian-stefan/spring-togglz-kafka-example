@@ -303,12 +303,10 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       AtomicLong accumulator = new AtomicLong(0L);
 
       kafkaConsumer.endOffsets(kafkaConsumer.assignment()).forEach((topicPartition, endOffset) -> {
-        long oldValue = accumulator.get();
-        if (offsets.containsKey(topicPartition)) {
-          long partitionOffset = endOffset - offsets.get(topicPartition) - 1;
+        if (endOffset > 0L) {
+          long oldValue = accumulator.get();
+          long partitionOffset = endOffset - offsets.getOrDefault(topicPartition, 0L) - 1L;
           accumulator.set(oldValue + partitionOffset);
-        } else {
-          accumulator.set(oldValue + endOffset);
         }
       });
 
