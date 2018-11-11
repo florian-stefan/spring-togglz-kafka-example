@@ -7,7 +7,6 @@ import static org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET
 import static org.apache.kafka.clients.consumer.ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.GROUP_ID_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG;
-import static org.apache.kafka.clients.consumer.ConsumerConfig.MAX_POLL_RECORDS_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG;
 import static org.apache.kafka.clients.producer.ProducerConfig.ACKS_CONFIG;
 import static org.apache.kafka.clients.producer.ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG;
@@ -46,9 +45,14 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
   private final FeatureStateProducer featureStateProducer;
   private final Map<String, FeatureStateStorageWrapper> featureStates;
 
-  public KafkaStateRepository(String bootstrapServers, String featureStateTopic, Duration pollingTimeout) {
-    featureStateConsumer = new FeatureStateConsumer(bootstrapServers, featureStateTopic, pollingTimeout);
-    featureStateProducer = new FeatureStateProducer(bootstrapServers, featureStateTopic);
+  public KafkaStateRepository(
+      String bootstrapServers,
+      String consumerTopic,
+      String producerTopic,
+      Duration pollingTimeout
+  ) {
+    featureStateConsumer = new FeatureStateConsumer(bootstrapServers, consumerTopic, pollingTimeout);
+    featureStateProducer = new FeatureStateProducer(bootstrapServers, producerTopic);
     featureStates = new ConcurrentHashMap<>();
 
     featureStateConsumer.start();
@@ -86,12 +90,12 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
     private final KafkaConsumer<String, String> consumer;
     private final CountDownLatch countDownLatch;
-    private final String featureStateTopic;
+    private final String consumerTopic;
     private final Duration pollingTimeout;
 
     private volatile boolean running;
 
-    FeatureStateConsumer(String bootstrapServers, String featureStateTopic, Duration pollingTimeout) {
+    FeatureStateConsumer(String bootstrapServers, String consumerTopic, Duration pollingTimeout) {
       Properties properties = new Properties();
       properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
       properties.setProperty(KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
@@ -99,11 +103,10 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       properties.setProperty(GROUP_ID_CONFIG, "feature-state-consumer-" + randomUUID());
       properties.setProperty(AUTO_OFFSET_RESET_CONFIG, "earliest");
       properties.setProperty(ENABLE_AUTO_COMMIT_CONFIG, "false");
-      properties.setProperty(MAX_POLL_RECORDS_CONFIG, "200");
 
       this.consumer = new KafkaConsumer<>(properties);
       this.countDownLatch = new CountDownLatch(1);
-      this.featureStateTopic = featureStateTopic;
+      this.consumerTopic = consumerTopic;
       this.pollingTimeout = pollingTimeout;
 
       running = false;
@@ -145,7 +148,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
 
     private void run() {
-      consumer.subscribe(singleton(featureStateTopic));
+      consumer.subscribe(singleton(consumerTopic));
 
       try {
         while (true) {
@@ -201,9 +204,9 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
   class FeatureStateProducer {
 
     private final KafkaProducer<String, String> producer;
-    private final String featureStateTopic;
+    private final String producerTopic;
 
-    FeatureStateProducer(String bootstrapServers, String featureStateTopic) {
+    FeatureStateProducer(String bootstrapServers, String producerTopic) {
       Properties properties = new Properties();
       properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
       properties.setProperty(KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
@@ -211,7 +214,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       properties.setProperty(ACKS_CONFIG, "all");
 
       this.producer = new KafkaProducer<>(properties);
-      this.featureStateTopic = featureStateTopic;
+      this.producerTopic = producerTopic;
     }
 
     void close() {
@@ -242,7 +245,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
 
     private ProducerRecord<String, String> buildRecord(String featureName, String featureStateAsString) {
-      return new ProducerRecord<>(featureStateTopic, featureName, featureStateAsString);
+      return new ProducerRecord<>(producerTopic, featureName, featureStateAsString);
     }
 
     private Callback buildCallback(String featureName) {

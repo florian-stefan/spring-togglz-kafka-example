@@ -26,4 +26,5 @@ Since the example applications contains the three features `FEATURE_A`, `FEATURE
 ###### TODO
 
 * Documentation (e.g. consumer group / consumer lags / compacted topic)
+* Consumer Lag Check (?)
 * Integration Test with embedded Kafka
