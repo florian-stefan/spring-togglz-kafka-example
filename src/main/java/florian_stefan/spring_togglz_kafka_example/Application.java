@@ -42,7 +42,13 @@ public class Application {
 
   @Bean(destroyMethod = "close")
   public KafkaStateRepository getStateRepository() {
-    return KafkaStateRepository.create(BOOTSTRAP_SERVERS, TOGGLZ_TOPIC, Duration.ofMillis(200));
+    return KafkaStateRepository.builder()
+        .bootstrapServers(BOOTSTRAP_SERVERS)
+        .inboundTopic(TOGGLZ_TOPIC)
+        .outboundTopic(TOGGLZ_TOPIC)
+        .pollingTimeout(Duration.ofMillis(200))
+        .initializationTimeout(Duration.ofSeconds(5))
+        .build();
   }
 
   private static void createTogglzTopicIfNecessary() {

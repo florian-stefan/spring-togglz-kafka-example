@@ -23,6 +23,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -45,53 +46,20 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
   private static final Logger LOG = LoggerFactory.getLogger(KafkaStateRepository.class);
 
+  private final Map<String, FeatureStateStorageWrapper> featureStates;
   private final FeatureStateConsumer featureStateConsumer;
   private final FeatureStateProducer featureStateProducer;
-  private final Map<String, FeatureStateStorageWrapper> featureStates;
 
-  private KafkaStateRepository(
-      String bootstrapServers,
-      String inboundTopic,
-      String outboundTopic,
-      Duration pollingTimeout,
-      Duration initializationTimeout
-  ) {
-    featureStateConsumer = new FeatureStateConsumer(bootstrapServers, inboundTopic, pollingTimeout, initializationTimeout);
-    featureStateProducer = new FeatureStateProducer(bootstrapServers, outboundTopic);
+  private KafkaStateRepository(Builder builder) {
     featureStates = new ConcurrentHashMap<>();
+    featureStateConsumer = new FeatureStateConsumer(builder, featureStates::put);
+    featureStateProducer = new FeatureStateProducer(builder);
 
     featureStateConsumer.start();
   }
 
-  public static KafkaStateRepository create(
-      String bootstrapServers,
-      String featureStateTopic,
-      Duration pollingTimeout,
-      Duration initializationTimeout
-  ) {
-    return new KafkaStateRepository(
-        requireNonNull(bootstrapServers),
-        requireNonNull(featureStateTopic),
-        requireNonNull(featureStateTopic),
-        requireNonNull(pollingTimeout),
-        requireNonNull(initializationTimeout)
-    );
-  }
-
-  public static KafkaStateRepository createWithInboundAndOutboundTopic(
-      String bootstrapServers,
-      String inboundTopic,
-      String outboundTopic,
-      Duration pollingTimeout,
-      Duration initializationTimeout
-  ) {
-    return new KafkaStateRepository(
-        requireNonNull(bootstrapServers),
-        requireNonNull(inboundTopic),
-        requireNonNull(outboundTopic),
-        requireNonNull(pollingTimeout),
-        requireNonNull(initializationTimeout)
-    );
+  public static Builder builder() {
+    return new Builder();
   }
 
   @Override
@@ -126,9 +94,52 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     return featureStateConsumer.consumerLag();
   }
 
-  class FeatureStateConsumer {
+  public static class Builder {
 
-    private final KafkaConsumer<String, String> consumer;
+    private String bootstrapServers;
+    private String inboundTopic;
+    private String outboundTopic;
+    private Duration pollingTimeout;
+    private Duration initializationTimeout;
+
+    private Builder() {
+    }
+
+    public Builder bootstrapServers(String bootstrapServers) {
+      this.bootstrapServers = bootstrapServers;
+      return this;
+    }
+
+    public Builder inboundTopic(String inboundTopic) {
+      this.inboundTopic = inboundTopic;
+      return this;
+    }
+
+    public Builder outboundTopic(String outboundTopic) {
+      this.outboundTopic = outboundTopic;
+      return this;
+    }
+
+    public Builder pollingTimeout(Duration pollingTimeout) {
+      this.pollingTimeout = pollingTimeout;
+      return this;
+    }
+
+    public Builder initializationTimeout(Duration initializationTimeout) {
+      this.initializationTimeout = initializationTimeout;
+      return this;
+    }
+
+    public KafkaStateRepository build() {
+      return new KafkaStateRepository(this);
+    }
+
+  }
+
+  static class FeatureStateConsumer {
+
+    private final KafkaConsumer<String, String> kafkaConsumer;
+    private final BiConsumer<String, FeatureStateStorageWrapper> updateHandler;
     private final String inboundTopic;
     private final Duration pollingTimeout;
     private final Map<TopicPartition, Long> offsets;
@@ -139,26 +150,22 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     private volatile boolean running;
     private volatile long consumerLag;
 
-    FeatureStateConsumer(
-        String bootstrapServers,
-        String inboundTopic,
-        Duration pollingTimeout,
-        Duration initializationTimeout
-    ) {
+    FeatureStateConsumer(Builder builder, BiConsumer<String, FeatureStateStorageWrapper> updateHandler) {
       Properties properties = new Properties();
-      properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+      properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, requireNonNull(builder.bootstrapServers));
       properties.setProperty(KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
       properties.setProperty(VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
       properties.setProperty(GROUP_ID_CONFIG, "feature-state-consumer-" + randomUUID());
       properties.setProperty(AUTO_OFFSET_RESET_CONFIG, "earliest");
       properties.setProperty(ENABLE_AUTO_COMMIT_CONFIG, "false");
 
-      this.consumer = new KafkaConsumer<>(properties);
-      this.inboundTopic = inboundTopic;
-      this.pollingTimeout = pollingTimeout;
+      this.kafkaConsumer = new KafkaConsumer<>(properties);
+      this.updateHandler = updateHandler;
+      this.inboundTopic = requireNonNull(builder.inboundTopic);
+      this.pollingTimeout = requireNonNull(builder.pollingTimeout);
       this.offsets = new ConcurrentHashMap<>();
       this.initializationLatch = new CountDownLatch(1);
-      this.initializationTimeout = initializationTimeout;
+      this.initializationTimeout = requireNonNull(builder.initializationTimeout);
       this.shutdownLatch = new CountDownLatch(1);
 
       running = false;
@@ -193,7 +200,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
           if (running) {
             try {
               LOG.info("Starting to close FeatureStateConsumer.");
-              consumer.wakeup();
+              kafkaConsumer.wakeup();
               shutdownLatch.await();
               running = false;
               LOG.info("Successfully closed FeatureStateConsumer.");
@@ -218,17 +225,17 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
 
     private void run() {
-      consumer.subscribe(singleton(inboundTopic));
+      kafkaConsumer.subscribe(singleton(inboundTopic));
 
       try {
         while (true) {
-          ConsumerRecords<String, String> records = consumer.poll(pollingTimeout);
+          ConsumerRecords<String, String> records = kafkaConsumer.poll(pollingTimeout);
 
           processRecords(records);
 
           updateConsumerLag();
 
-          consumer.commitSync();
+          kafkaConsumer.commitSync();
         }
       } catch (WakeupException e) {
         LOG.info("Received shutdown signal.");
@@ -248,7 +255,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
           LOG.info("Starting to process state of feature {}.", featureName);
           FeatureStateStorageWrapper storageWrapper = deserialize(featureStateAsString);
           LOG.info("Successfully deserialized state of feature {}.", featureName);
-          featureStates.put(featureName, storageWrapper);
+          updateHandler.accept(featureName, storageWrapper);
           LOG.info("Successfully processed state of feature {}.", featureName);
           updatePartitionOffset(record.partition(), record.offset());
         } catch (Exception e) {
@@ -276,7 +283,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     private long accumulateEndOffsets() {
       AtomicLong accumulator = new AtomicLong(0L);
 
-      consumer.endOffsets(consumer.assignment()).forEach((topicPartition, endOffset) -> {
+      kafkaConsumer.endOffsets(kafkaConsumer.assignment()).forEach((topicPartition, endOffset) -> {
         long oldValue = accumulator.get();
         long partitionOffset = endOffset - offsets.getOrDefault(topicPartition, 0L) - 1;
         accumulator.set(oldValue + partitionOffset);
@@ -288,7 +295,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     private void shutdown() {
       try {
         LOG.info("Starting to close KafkaConsumer.");
-        consumer.close();
+        kafkaConsumer.close();
         LOG.info("Successfully closed KafkaConsumer.");
       } catch (Exception e) {
         LOG.error("An error occurred while closing KafkaConsumer!", e);
@@ -298,20 +305,20 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
   }
 
-  class FeatureStateProducer {
+  static class FeatureStateProducer {
 
     private final KafkaProducer<String, String> producer;
     private final String outboundTopic;
 
-    FeatureStateProducer(String bootstrapServers, String outboundTopic) {
+    FeatureStateProducer(Builder builder) {
       Properties properties = new Properties();
-      properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+      properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, requireNonNull(builder.bootstrapServers));
       properties.setProperty(KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
       properties.setProperty(VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
       properties.setProperty(ACKS_CONFIG, "all");
 
       this.producer = new KafkaProducer<>(properties);
-      this.outboundTopic = outboundTopic;
+      this.outboundTopic = requireNonNull(builder.outboundTopic);
     }
 
     void close() {
