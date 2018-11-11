@@ -42,7 +42,7 @@ public class Application {
 
   @Bean(destroyMethod = "close")
   public KafkaStateRepository getStateRepository() {
-    return new KafkaStateRepository(BOOTSTRAP_SERVERS, TOGGLZ_TOPIC, TOGGLZ_TOPIC, Duration.ofMillis(200));
+    return KafkaStateRepository.create(BOOTSTRAP_SERVERS, TOGGLZ_TOPIC, Duration.ofMillis(200));
   }
 
   private static void createTogglzTopicIfNecessary() {
