@@ -1,13 +1,9 @@
 package florian_stefan.spring_togglz_kafka_example;
 
-import static java.util.Collections.singleton;
 import static java.util.Objects.requireNonNull;
-import static java.util.UUID.randomUUID;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
-import static org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG;
-import static org.apache.kafka.clients.consumer.ConsumerConfig.GROUP_ID_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG;
 import static org.apache.kafka.clients.producer.ProducerConfig.ACKS_CONFIG;
@@ -18,6 +14,8 @@ import static org.togglz.core.util.FeatureStateStorageWrapper.wrapperForFeatureS
 
 import com.google.gson.GsonBuilder;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +28,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -155,8 +154,6 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       properties.setProperty(BOOTSTRAP_SERVERS_CONFIG, requireNonNull(builder.bootstrapServers));
       properties.setProperty(KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
       properties.setProperty(VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-      properties.setProperty(GROUP_ID_CONFIG, "feature-state-consumer-" + randomUUID());
-      properties.setProperty(AUTO_OFFSET_RESET_CONFIG, "earliest");
       properties.setProperty(ENABLE_AUTO_COMMIT_CONFIG, "false");
 
       this.kafkaConsumer = new KafkaConsumer<>(properties);
@@ -226,7 +223,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     }
 
     private void run() {
-      kafkaConsumer.subscribe(singleton(inboundTopic));
+      assignConsumer();
 
       try {
         while (true) {
@@ -245,6 +242,25 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       } finally {
         shutdown();
       }
+    }
+
+    private void assignConsumer() {
+      LOG.info("Starting to retrieve partitions for topic {}.", inboundTopic);
+      List<TopicPartition> topicPartitions = getTopicPartitions();
+      LOG.info("Successfully retrieved topic partitions {}.", topicPartitions);
+
+      kafkaConsumer.assign(topicPartitions);
+      kafkaConsumer.seekToBeginning(topicPartitions);
+    }
+
+    private List<TopicPartition> getTopicPartitions() {
+      List<TopicPartition> topicPartitions = new ArrayList<>();
+
+      for (PartitionInfo partitionInfo : kafkaConsumer.partitionsFor(inboundTopic)) {
+        topicPartitions.add(new TopicPartition(partitionInfo.topic(), partitionInfo.partition()));
+      }
+
+      return topicPartitions;
     }
 
     private void processRecords(ConsumerRecords<String, String> records) {
