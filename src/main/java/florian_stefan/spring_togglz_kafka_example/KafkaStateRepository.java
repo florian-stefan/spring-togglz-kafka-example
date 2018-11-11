@@ -41,7 +41,37 @@ import org.togglz.core.repository.StateRepository;
 import org.togglz.core.util.FeatureStateStorageWrapper;
 
 /**
- * A {@link StateRepository} based on Apache Kafka.
+ * A {@link StateRepository} based on Apache Kafka. The instances of this class contain
+ * a {@link ConcurrentHashMap} for caching {@link FeatureState}s, a {@link KafkaConsumer}
+ * for updating the cache and a {@link KafkaProducer} for sending {@link FeatureState}s
+ * to Kafka. The method {@link #getFeatureState(Feature)} reads the {@link FeatureState}
+ * from the cache and the method {@link #setFeatureState(FeatureState)} invokes the
+ * underlying {@link KafkaProducer}.
+ *
+ * <p>The method {@link #consumerLag()} returns the current lag of the Kafka consumer. If
+ * the lag is greater than zero, the {@link FeatureState} cache might contain stale data.
+ * Since every newly created instance of this class has to read all {@link FeatureState}s
+ * from Kafka, this means that a {@link KafkaStateRepository} should only be used after its
+ * initialization has completed. Therefore, the constructor blocks the calling thread until
+ * the consumer lag has reached zero. The maximum amount of time that the constructor blocks
+ * can be configured with the <i>initializationTimeout</i>. Moreover, it is a good practice to
+ * implement a health check that monitors the consumer lag.
+ *
+ * <p>The underlying Kafka consumer polls for data. The polling interval can be configured
+ * with the <i>pollingTimeout</i>. If an error occurs during the processing of records
+ * fetched from Kafka, the Kafka consumer will be shutdown. Afterwards, {@link #isRunning()}
+ * will return {@code false} and {@link #getFeatureState(Feature)} will return {@code null}.
+ *
+ * <p>To create a new {@link KafkaStateRepository} instance, it is required to define an
+ * inbound topic and an outbound topic. The underlying Kafka consumer fetches data from the
+ * inbound topic and the Kafka producer sends data to the outbound topic. In most cases, the
+ * inbound topic and the outbound topic will be identical. But depending on the cross datacenter
+ * replication strategy, it might be necessary to use different topics and to replicate the data
+ * between them. The inbound topic should be configured to use the cleanup policy <i>compact</i>
+ * since, on the hand, it is used as persistent storage and, on the other, it has to be entirely
+ * consumed during the initialization of the {@link KafkaStateRepository}.
+ *
+ * @author Florian Stefan
  */
 public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
@@ -59,6 +89,11 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     featureStateConsumer.start();
   }
 
+  /**
+   * Returns a new instance of a {@link KafkaStateRepository} builder.
+   *
+   * @return the new {@link KafkaStateRepository} builder
+   */
   public static Builder builder() {
     return new Builder();
   }
@@ -71,7 +106,7 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
 
   @Override
   public FeatureState getFeatureState(Feature feature) {
-    if (featureStateConsumer.isRunning()) {
+    if (isRunning()) {
       FeatureStateStorageWrapper storageWrapper = featureStates.get(feature.name());
 
       if (storageWrapper != null) {
@@ -91,6 +126,24 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     featureStateProducer.send(featureState.getFeature(), wrapperForFeatureState(featureState));
   }
 
+  /**
+   * Returns {@code true} if the underlying Kafka consumer is running.
+   * If the Kafka consumer is not running, the {@link FeatureState} cache
+   * is not updated and {@link #getFeatureState(Feature)} might return stale
+   * data.
+   *
+   * @return {@code true} if the underlying Kafka consumer is running.
+   */
+  public boolean isRunning() {
+    return featureStateConsumer.isRunning();
+  }
+
+  /**
+   * Returns the current lag of the underlying Kafka consumer. If the lag is
+   * greater than zero, the {@link FeatureState} cache might contain stale data.
+   *
+   * @return the current consumer lag
+   */
   public long consumerLag() {
     return featureStateConsumer.consumerLag();
   }
@@ -106,31 +159,78 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
     private Builder() {
     }
 
+    /**
+     * Defines a list of host/port pairs that will be used by the underlying Kafka consumer
+     * and producer for establishing an initial connection to the Kafka cluster.
+     *
+     * @param bootstrapServers the list of host/port pairs used for establishing a connection
+     * @return the current instance of this builder
+     */
     public Builder bootstrapServers(String bootstrapServers) {
       this.bootstrapServers = bootstrapServers;
       return this;
     }
 
+    /**
+     * Defines the name of the topic that the underlying Kafka consumer will poll to update
+     * the {@link FeatureState} cache. In most cases, the inbound topic and the outbound topic
+     * will be identical.
+     *
+     * @param inboundTopic the name of the topic used by the Kafka consumer
+     * @return the current instance of this builder
+     */
     public Builder inboundTopic(String inboundTopic) {
       this.inboundTopic = inboundTopic;
       return this;
     }
 
+    /**
+     * Defines the name of the topic to which the underlying Kafka producer will send
+     * {@link FeatureState}s. In most cases, the inbound topic and the outbound topic
+     * will be identical.
+     *
+     * @param outboundTopic the name of the topic used by the Kafka producer
+     * @return the current instance of this builder
+     */
     public Builder outboundTopic(String outboundTopic) {
       this.outboundTopic = outboundTopic;
       return this;
     }
 
+    /**
+     * Defines the polling interval of the underlying Kafka consumer. A higher value will
+     * increase the latency of {@link FeatureState} updates. A lower value will increase
+     * the I/O pressure on the Kafka cluster.
+     *
+     * @param pollingTimeout the polling interval
+     * @return the current instance of this builder
+     */
     public Builder pollingTimeout(Duration pollingTimeout) {
       this.pollingTimeout = pollingTimeout;
       return this;
     }
 
+    /**
+     * Defines an upper bound for the initialization time of the {@link KafkaStateRepository}.
+     * If the underlying Kafka consumer is not able to read all data from Kafka within the
+     * given interval, the {@link #build()} method will throw an exception.
+     *
+     * @param initializationTimeout the upper bound for the initialization time
+     * @return the current instance of this builder
+     */
     public Builder initializationTimeout(Duration initializationTimeout) {
       this.initializationTimeout = initializationTimeout;
       return this;
     }
 
+    /**
+     * Returns a new {@link KafkaStateRepository} instance.
+     *
+     * @return the new {@link KafkaStateRepository} instance
+     * @throws NullPointerException if any of the configuration values is {@code null}
+     * @throws RuntimeException if the {@link KafkaStateRepository} can't be initialized
+     *         within the defined interval
+     */
     public KafkaStateRepository build() {
       return new KafkaStateRepository(this);
     }

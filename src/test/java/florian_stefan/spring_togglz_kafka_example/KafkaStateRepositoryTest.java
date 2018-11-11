@@ -92,6 +92,13 @@ public class KafkaStateRepositoryTest {
   }
 
   @Test
+  public void shouldBeRunningAfterInitialization() {
+    KafkaStateRepository stateRepository = createStateRepository(TOPIC);
+
+    assertThat(stateRepository.isRunning()).isTrue();
+  }
+
+  @Test
   public void shouldHaveNoConsumerLagAfterInitialization() {
     KafkaStateRepository stateRepository = createStateRepository(TOPIC);
 

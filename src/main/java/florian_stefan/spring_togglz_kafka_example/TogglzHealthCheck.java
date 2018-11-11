@@ -15,7 +15,11 @@ public class TogglzHealthCheck implements HealthIndicator {
 
   @Override
   public Health health() {
-    return stateRepository.consumerLag() < 1 ? Health.up().build() : Health.down().build();
+    return isHealthy() ? Health.up().build() : Health.down().build();
+  }
+
+  private boolean isHealthy() {
+    return stateRepository.isRunning() && stateRepository.consumerLag() < 1;
   }
 
 }
