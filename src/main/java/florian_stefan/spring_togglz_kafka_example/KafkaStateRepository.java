@@ -178,6 +178,8 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
       } else {
         synchronized (this) {
           if (running) {
+            LOG.info("FeatureStateConsumer has already been started.");
+          } else {
             try {
               LOG.info("Starting to start FeatureStateConsumer.");
               new Thread(this::run).start();
@@ -187,8 +189,6 @@ public class KafkaStateRepository implements AutoCloseable, StateRepository {
             } catch (InterruptedException e) {
               throw new RuntimeException("An error occurred while awaiting initialization.", e);
             }
-          } else {
-            LOG.info("FeatureStateConsumer has already been started.");
           }
         }
       }
